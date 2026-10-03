@@ -1,14 +1,16 @@
 '''
     GenMacro
     
-    version 1
-    2026 09 25
+    version 1.1
+    2026 10 03
 
     
 '''
 
 #crutch
 import mouse, keyboard
+#from mouse import ButtonEvent, MoveEvent, WheelEvent
+#from keyboard import KeyboardEvent
 
 import time, os, sys
 import threading
@@ -17,7 +19,6 @@ import threading
 from ctypes import windll
 
 import tkinter as tk
-from tkinter import simpledialog, messagebox
 
 
 
@@ -71,42 +72,56 @@ class macro():
     
     '''
 
-    def __init__(self,name, settings):
+    def __init__(self, name, settings, speed):
         self.name=name
-        self.instructions=[[],[],[]]
+        self.instructions=[[],[]]
         self.failsafeTrigger=False
-        
+        self.playback_speed=1
+
         self.round_precision=None
         self.step_precision=None
         self.keybind_start=None
         self.keybind_stop=None
 
-        self.mpEndFlag=False
-        self.moveEndFlag=False
+        self.mouseEndFlag=False
         self.keyEndFlag=False
 
         self.sset(settings)
+        self.spset(speed)
 
         self.stopFlag=threading.Event()
 
 
     def retName(self):
         return self.name
+
     
     def retInstruct(self):
         return self.instructions
 
+
     def setKeybindStart(self,keyControl):
         self.keybind_start=keyControl
 
+
     def setKeybindStop(self,keyControl):
         self.keybind_stop=keyControl
+
+
+    def spset(self,speed):
+        if(speed>0):
+            self.playback_speed=speed
+        else:
+            log(1,f"Extreme playback speed x{speed}")
+        #default already set to 1
+
 
     def sset(self, settings):
         self.keybind_start=f"{settings[0]}+{settings[1]}"
         self.keybind_stop=f"{settings[2]}+{settings[3]}"
         self.setRoundPrecision(int(settings[4]))#pre checked to meaningful extent
         self.setStepPrecision(int(settings[5]))
+
 
     def setRoundPrecision(self, round_precision):
         '''
@@ -118,6 +133,7 @@ class macro():
         self.round_precision=round_precision
         if(round_precision==0 or round_precision>8):
             log(1,f"Extreme round precision ({round_precision})")
+
             
     def setStepPrecision(self, step_precision):
         '''
@@ -134,17 +150,23 @@ class macro():
     def delay(self, pausetime):
         '''
             Waits 
-            This function is here as a placeholder
+
             Pass: 
                 time to sleep'
                 
-            TODO: experiment with perf_counter
         '''
-        #test perf_counter
-        time.sleep(pausetime)
+        start_ns = time.perf_counter_ns()
+        target_ns = start_ns + int((pausetime*self.playback_speed) * 1_000_000_000)
+    
+        time.sleep((pausetime*self.playback_speed) * 0.98)
+        
+        while time.perf_counter_ns() < target_ns:
+            pass
+
 
     def flush(self):
         pass
+
 
     def awaitAbort(self):
         '''
@@ -158,6 +180,14 @@ class macro():
                 self.stopFlag.set()
             time.sleep(0.05)
 
+
+    def checkAbortLoop(self):
+        '''
+        '''
+        while(not self.stopFlag.is_set()):
+            time.sleep(0.05)
+
+
     def forceFlag(self):
         keyboard.send(self.keybind_stop, True, False)
         keyboard.is_pressed(self.keybind_stop)
@@ -167,14 +197,13 @@ class macro():
     def setInstruct(self,instructions):
         '''
             Sets instructions from compilation of a file
-            instructions[0] corresponds to mouse movemount
-            instructions[1] corresponds to mouse control
-            instructions[2] corresponds to keyboard
+            instructions[0] corresponds to mouse 
+            instructions[1] corresponds to keyboard
             Pass: 
                 list instructions containing tuples representing actions and wait times
                 if a tuple is found, the macro will push an action
                 if not, a stall is indicated. instead will push a stall command that waits
-                for example, [[][][(c1,1),s0.5]] 
+                for example, [[][(c1,1),s0.5]] 
                 located in row 2, macro will push the action 'push key code 1 down, then wait 0.5 seconds'
         '''
         for r in range(len(instructions)):
@@ -184,16 +213,13 @@ class macro():
                     continue
 
                 isT=(isinstance(instructions[r][c],tuple))
-
                 if(isT):
                     if(r==0):      #mouse
-                        self.instructions[r].append(lambda c=instructions[r][c]:self.move(*c))
-                    elif(r==1):     #left
-                        self.instructions[r].append(lambda c=instructions[r][c]:self.mp(*c))
-                    elif(r==2):           #key
-                        self.instructions[r].append(lambda c=instructions[r][c]:self.key(*c))
+                        self.instructions[r].append(lambda m_c=instructions[r][c]:self.mouseAction(*m_c))
+                    elif(r==1):           #key
+                        self.instructions[r].append(lambda k=instructions[r][c]:self.keyAction(*k))
                 else:               #const stall
-                    self.instructions[r].append(lambda c=instructions[r][c]:self.delay(c))
+                    self.instructions[r].append(lambda s=instructions[r][c]:self.delay(s))
 
 
     def useInstruct(self,i):#read
@@ -208,45 +234,14 @@ class macro():
             if(not self.stopFlag.is_set()):
                 callable()
     
-        if(i==0):
-            self.moveEndFlag=True
-        elif(i==1):
-            self.mpEndFlag=True
+        if not i:
+            self.mouseEndFlag=True
         else:
             self.keyEndFlag=True
 
-        if(self.moveEndFlag and self.mpEndFlag and self.keyEndFlag):
+        if(self.mouseEndFlag and self.keyEndFlag):
             self.stopFlag.set()#<<<
             
-
-    def rec(self):#self.recording
-        '''
-            Records all input
-            must watch from another thread
-        '''
-
-        
-        log(0,f"Begin recording {self.name}")
-
-        mT=threading.Thread(target=self.tMouse)
-        cT=threading.Thread(target=self.tMouseC)
-        kT=threading.Thread(target=self.tKey)
-
-        mT.daemon=True
-        cT.daemon=True
-        kT.daemon=True
-
-        mT.start()
-        cT.start()
-        kT.start()
-
-        mT.join()
-        cT.join()
-        kT.join()
-
-        self.stopFlag.clear()
-        return f"{self.name}: Recording stopped"
-
 
 
 
@@ -256,30 +251,25 @@ class macro():
             Runs loaded instructions
             
         '''
-        self.mpEndFlag=False
-        self.moveEndFlag=False
+        self.mouseEndFlag=False
         self.keyEndFlag=False
 
         log(0,f"Begin replay of {self.name}")
-        t=threading.Thread(target=lambda:self.useInstruct(0))
-        t1=threading.Thread(target=lambda:self.useInstruct(1))
-        t2=threading.Thread(target=lambda:self.useInstruct(2))
-        t3=threading.Thread(target=self.awaitAbort)#watches
+        m_cT=threading.Thread(target=lambda:self.useInstruct(0))
+        kT=threading.Thread(target=lambda:self.useInstruct(1))
+        w=threading.Thread(target=self.awaitAbort)#watches
 
-        t.daemon=True
-        t1.daemon=True
-        t2.daemon=True
-        t3.daemon=True
+        m_cT.daemon=True
+        kT.daemon=True
+        w.daemon=True
 
-        t.start()
-        t1.start()
-        t2.start()
-        t3.start()
+        m_cT.start()
+        kT.start()
+        w.start()
 
-        t.join()
-        t1.join()
-        t2.join()
-        t3.join()
+        m_cT.join()
+        kT.join()
+        w.join()
 
         self.stopFlag.clear()
 
@@ -295,40 +285,59 @@ class macro():
     # Movement instructions
 
 
-    def move(self,x,y):
-        '''
-            Thread 1
-            moves the mouse
-            
-            TODO: look at the 'fix' feature in earlier versions, test on multiple screen sizes
-        '''
-        #x = int(x/self.div_x)
-        #y = int(y/self.div_y)
-        mouse.move(x,y,True)
-
-
-    def mp(self, ctype, action):#c1,1
+    def mouseAction(self, cmd, args_n, args_n1):#c1,1 (mp)
         '''
             Thread 2
             mouse click
+            0 LEFT = 'left'
+            1 RIGHT = 'right'
+            2 MIDDLE = 'middle'
+            3 WHEEL = 'wheel'
+            4 X = 'x'
+            5 X2 = 'x2'
             Pass: 
                 type (left or right click), action (up or down)
                 ctype 1=left, 0=right
                 action 1=down, 0=up
         '''
-        if(ctype==1):#1=left
-            if(action==1):#1=down
-                mouse.press(mouse.LEFT)
+        if(cmd=='m'):                           #m move(x,y)
+            mouse.move(args_n,args_n1,True)
+
+        elif(cmd=='c'):                         #c click(button,type)
+            if(args_n==0):          #1=left
+                if(args_n1==1):         #1=down
+                    mouse.press(mouse.LEFT)
+                else:
+                    mouse.release(mouse.LEFT)
+            elif(args_n==1):        #right
+                if(args_n1==1):
+                    mouse.press(mouse.RIGHT)
+                else:
+                    mouse.release(mouse.RIGHT)
+            elif(args_n==2):        #middle
+                if(args_n1==1):
+                    mouse.press(mouse.MIDDLE)
+                else:
+                    mouse.release(mouse.MIDDLE)
+            elif(args_n==3):        #X (side button 1)
+                if(args_n1==1):
+                    mouse.press(mouse.X)
+                else:
+                    mouse.release(mouse.X)
+            elif(args_n==4):        #X2 (side button 2)
+                if(args_n1==1):
+                    mouse.press(mouse.X2)
+                else:
+                    mouse.release(mouse.X2)
+
+        elif(cmd=='w'):             #wheel
+            if(args_n1==1):
+                mouse.wheel(1)
             else:
-                mouse.release(mouse.LEFT)
-        else:
-            if(action==1):
-                mouse.press(mouse.RIGHT)
-            else:
-                mouse.release(mouse.RIGHT)
+                mouse.wheel(-1)     
 
 
-    def key(self,keyid,action):#c3,1
+    def keyAction(self,keyid,action):#c3,1 (key)
         '''
             Thread 3
             Keyboard
@@ -354,91 +363,100 @@ class macro():
     # Recording functions
 
 
-    def tMouse(self): #time,pos,lastPos -> _Mouse _end     [0] c PosX,PosY
+
+
+    def rec(self):#self.recording
         '''
-            Thread 1
-            Record Mouse movement
-            Pushes instructions in real time
+            Records all input
+            must watch from another thread
         '''
-        log(0,"Recording mouse movement")
-        instructions=[]
-        track=time.time()
-        lastPos=mouse.get_position()
-        currentPos=lastPos
+
         
-        while not self.stopFlag.is_set():
-            
-            currentPos=mouse.get_position()#-> (x,y)
-            if(currentPos!=lastPos):
-                moveTime=time.time()
-                instructions.append(f"s{round(moveTime-track,self.round_precision)}")
-                instructions.append(f"c{currentPos[0]},{currentPos[1]}")
-                track=time.time()
-            
-            lastPos=mouse.get_position()#-> (x,y)
-            self.delay(self.step_precision)
-            
-        log(0,"Stopped recording mouse movement")
-        self.instructions[0]=instructions
+        log(0,f"Begin recording {self.name}")
+
+        m_cT=threading.Thread(target=self.recMouse)
+        kT=threading.Thread(target=self.recKey)
+
+        m_cT.daemon=True
+        kT.daemon=True
+
+        m_cT.start()
+        kT.start()
+
+        m_cT.join()
+        kT.join()
+
+        self.stopFlag.clear()
+        return f"{self.name}: Recording stopped"
 
 
-
-    def tMouseC(self):#time,pos,lastPos -> _MouseC _end           [1][2]c PosX,PosY,dur
+    def recMouse(self):#time,pos,lastPos -> _MouseC _end           [1][2]c PosX,PosY,dur (tMouseC)
         '''
             Thread 2
             Record Mouse function
             pushes instructions in real time
             has a check to ensure a macro cannot exit without releasing all pressed inputs
             
-            TODO: find out if this actually works, may need to invert not None
-        '''
-        log(0,"Recording mouse function")
-        instructions=[]
-        trackLeft=time.time()
-        trackRight=time.time()
-    
-        pressingLeft=None
-        pressingRight=None
+            0 LEFT = 'left'
+            1 RIGHT = 'right'
+            2 MIDDLE = 'middle'
+            3 WHEEL = 'wheel'
+            4 X = 'x'
+            5 X2 = 'x2'
 
-        while not self.stopFlag.is_set():
-            
-            if mouse.is_pressed('left'):#left click
-                if pressingLeft is None:
-                    pressingLeft=time.time()
-                    instructions.append(f"s{round(pressingLeft-trackLeft, self.round_precision)}c1,1")
-            else:
-                if pressingLeft is not None:  
-                    duration = time.time() - pressingLeft
-                    instructions.append(f"s{round(duration, self.round_precision)}c1,0")
-                    pressingLeft=None  
-                    trackLeft=time.time()
-            if mouse.is_pressed('right'):#right click
-                if pressingRight is None:  
-                    pressingRight=time.time()
-                    instructions.append(f"s{round(pressingRight-trackRight, self.round_precision)}c0,1")
-            else:
-                if pressingRight is not None: 
-                    duration=time.time()-pressingRight
-                    instructions.append(f"s{round(duration, self.round_precision)}c0,0")
-                    pressingRight=None  
-                    trackLeft=time.time()
-                
-            self.delay(self.step_precision)
+        '''
         
-        if pressingLeft is not None:  #reset left pressed
-            duration = time.time() - pressingLeft
-            instructions.append(f"s{round(duration, self.round_precision)}c1,0")
-        if pressingRight is not None: #reset right pressed
-            duration=time.time()-pressingRight
-            instructions.append(f"s{round(duration, self.round_precision)}c0,0")
+        log(0,"Recording mouse function")
+        track=time.time()
+        trackMovement=track
+        events=[]
+        lost_keys=[0]*6#tracks keys that are not properly released by the end of the recording
+
+        def c(event):
+            if (not self.stopFlag.is_set()):
+                events.append(event)
+
+        mouse.hook(c)
+        self.checkAbortLoop()
+        mouse.unhook(c)
+
+        if(not len(events)):#events are none
+            return
+        
+
+        for event in events:
+            if(isinstance(event,mouse.ButtonEvent)):
+                if(event.button=='left'):
+                    self.instructions[0].append(f"s{round(event.time-track,self.round_precision)}c0,{(event.event_type == "down" or event.event_type=="double")+0}")#down=1 right =1-> cleft,down -> c0,1
+                elif(event.button=='right'):
+                    self.instructions[0].append(f"s{round(event.time-track,self.round_precision)}c1,{(event.event_type == "down" or event.event_type=="double")+0}")
+                elif(event.button=='middle'):
+                    self.instructions[0].append(f"s{round(event.time-track,self.round_precision)}c2,{(event.event_type == "down" or event.event_type=="double")+0}")
+                elif(event.button=='x'):
+                    self.instructions[0].append(f"s{round(event.time-track,self.round_precision)}c3,{(event.event_type == "down" or event.event_type=="double")+0}")
+                elif(event.button=='x2'):#none else
+                    self.instructions[0].append(f"s{round(event.time-track,self.round_precision)}c4,{(event.event_type == "down" or event.event_type=="double")+0}")
+                track=event.time
+                #lost keys dictionary here <<<<<<<<<<<<<<<<<
+            elif(isinstance(event,mouse.MoveEvent)):
+                self.instructions[0].append(f"s{round(event.time-track,self.round_precision)}m{event.x},{event.y}")
+                track=event.time
+            else: #mousewheel
+                self.instructions[0].append(f"s{round(event.time-track,self.round_precision)}w{abs(int(event.delta))},{(event.delta>0)+0}")#check <<<<<<<<<<<<<<<<<
+                track=event.time
+
+        # for i in range(len(lost_keys)):#close all pressed keys (very important)
+        #     if(lost_keys[i]==1):
+        #         self.instructions[1].append(f"c{i},0") 
+
+        
 
     
         log(0,"Stopped recording mouse function")
-        self.instructions[1]=instructions
 
         
 
-    def tKey(self):                            #   [3] c keyid 1/0 down/up
+    def recKey(self):                            #   [3] c keyid 1/0 down/up (tKey)
         '''
             Thread 3
             Record Keyboard
@@ -451,7 +469,6 @@ class macro():
 
         
 
-        instructions=[]
         lost_keys=[0]*100
         
         track=time.time()
@@ -469,24 +486,23 @@ class macro():
         if(not len(events)):#events are none
             return
         
-        for i in range(len(events)):
-
-            if events[i].event_type=='down': 
-                instructions.append(f"s{round(events[i].time-track, self.round_precision)}c{events[i].scan_code},1") 
-                track=events[i].time
-                lost_keys[events[i].scan_code]=1
-            elif events[i].event_type== 'up':
-                instructions.append(f"s{round(events[i].time-track, self.round_precision)}c{events[i].scan_code},0") 
-                track=events[i].time
-                lost_keys[events[i].scan_code]=0
+        for event in events:
+            
+            if event.event_type=='down': 
+                self.instructions[1].append(f"s{round(event.time-track, self.round_precision)}k{event.scan_code},1") 
+                track=event.time
+                lost_keys[event.scan_code]=1
+            elif event.event_type== 'up':
+                self.instructions[1].append(f"s{round(event.time-track, self.round_precision)}k{event.scan_code},0") 
+                track=event.time
+                lost_keys[event.scan_code]=0
                 
         for i in range(len(lost_keys)):#close all pressed keys (very important)
             if(lost_keys[i]==1):
-                instructions.append(f"c{i},0") 
+                self.instructions[1].append(f"k{i},0") 
 
         
         log(0,"Stopped recording keyboard")
-        self.instructions[2]=instructions
 
 
 
@@ -505,19 +521,23 @@ class macro():
 
 
 def settingsWrite(where, settings):
+    '''
+        TODO: check what errors are thrown here
+    '''
     settingsWriteHelper(where, settings)
 
 
-def settingsWriteHelper(where, settings):
+def settingsWriteHelper(fileSettings, settings):
     '''
         Writes data to settings
+        Assumes fileSettings is right as declared in main()
+
         Pass: 
             the path to the file, the data to write
     '''
-    if(not os.path.exists(where)):
-        raise throw(f"{where} does not exist")
     
-    with open(where,'w') as fileOUT:#replace
+    
+    with open(fileSettings,'w') as fileOUT:#replace
         fileOUT.write("keybind_start_1:")
         fileOUT.write(settings[0])
         fileOUT.write("\nkeybind_start_2:")
@@ -545,6 +565,7 @@ def settingsComp(where, data_send_list, DEFAULT_SETTINGS):
         log(1,f"Rewriting settings: {e}")
         settingsWrite(where,DEFAULT_SETTINGS)
         log(0,f"Defaults restored")
+
     
 def settingsCompHelper(where, data_send_list):
     '''
@@ -618,19 +639,23 @@ def fileCompHelper(where,m):
     else:
         raise throw(f"{m.retName()}: file does not exist")
 
-    n=n1=0
+    args_n=args_n1=0
     send_index=0
     line_instruction_count=0
     line_cont_end=0
     m_current_alloc=-1
     
-    m_data_send_list=[[],[],[]]
+    m_data_send_list=[[],[]]
         
     with open(m_dir,"r") as fileIN:
         for line_count, line in enumerate(fileIN, start=1):#for line
-            
+
+            #add screen size here
+
             if(line[1:3]==">>"):#define alloc in macrolist
                 m_current_alloc=int(line[0:1])
+                if(m_current_alloc>1):
+                    raise throw(f"\"{m_current_alloc}>>\" is invalid")
                 continue
             
             line_cont_end=line.find(';')
@@ -638,12 +663,16 @@ def fileCompHelper(where,m):
             if(line_cont_end or m_current_alloc>-1):#has data, defined alloc
                 for i,ch in enumerate(line):#char in line
                     
-                    if(ch.isalpha()):#c,s
+                    if(ch.isalpha()):#m,c,k,s
                         send_index=i+1
                         while((not line[send_index].isalpha()) and (send_index!=line_cont_end)):send_index+=1
                         try:
-                            n,n1=tuple(map(int, line[i+1:send_index].split(",")))
-                            m_data_send_list[m_current_alloc].append((n,n1))
+                            args_n,args_n1=tuple(map(int, line[i+1:send_index].split(",")))
+                            if(ch!='k'):
+                                m_data_send_list[m_current_alloc].append((ch,args_n,args_n1))#mouse codes
+                            else:
+                                m_data_send_list[m_current_alloc].append((args_n,args_n1))#key has no codes
+
                         except ValueError:
                             m_data_send_list[m_current_alloc].append(float(line[i+1:send_index]))
                         line_instruction_count+=1
@@ -678,6 +707,7 @@ def fileWriteHelper(where,m):
             directory containing macros, existing macro
         
         TODO: check directory
+            +Move the file checking to another function
     '''
 
     m_dir=f"{where}/{m.retName()}"
@@ -686,34 +716,26 @@ def fileWriteHelper(where,m):
     else:
         raise throw(f"{m.retName()}: file does not exist")
 
-    MAX_INSTR=20
-    max_instr_line=MAX_INSTR
-    m_ref_instr=m.retInstruct()
+    m_instr=m.retInstruct()
     
-    with open(m_dir,'+r') as fileOUT:
+    with open(m_dir,'w') as fileOUT:#erase
         
-        for r in range(len(m_ref_instr)):
-            if m_ref_instr[r]: #skip if empty
+        for r in range(len(m_instr)):
+            if m_instr[r]: #skip if empty
                 fileOUT.write(f"{r}>>\n")
-                max_instr_line=MAX_INSTR
                     
-                for c in range(len(m_ref_instr[r])):
+                for c in range(len(m_instr[r])):
                             
-                    if(isinstance(m_ref_instr[r][c],tuple)):
-                        fileOUT.write("c")
-                        for i in range(len(m_ref_instr[r][c])-1):
-                            fileOUT.write(f"{m_ref_instr[r][c][i]},")
-                        fileOUT.write(f"{m_ref_instr[r][c][len(m_ref_instr[r][c])-1]}")
+                    if(isinstance(m_instr[r][c],tuple)):
+                        #fileOUT.write("c")
+                        for i in range(len(m_instr[r][c])-1):
+                            fileOUT.write(f"{m_instr[r][c][i]},")
+                        fileOUT.write(f"{m_instr[r][c][len(m_instr[r][c])-1]}")
                     else:
-                        fileOUT.write(m_ref_instr[r][c])
-                    max_instr_line-=1
+                        fileOUT.write(m_instr[r][c])
                     
-                    if(max_instr_line==0):
+                    if(c==len(m_instr[r])-1):
                         fileOUT.write(';\n')
-                        max_instr_line=MAX_INSTR
-                    elif(c==len(m_ref_instr[r])-1):
-                        fileOUT.write(';\n')
-                        max_instr_line=MAX_INSTR
     
     #os excpt
 
@@ -730,7 +752,7 @@ def fileWrite(where,m):
 
 
 
-def checkDirHelper(settingsDir,macrosDir,fileSettings):
+def checkDirHelper(settingsDir,macrosDir,fileSettings,defaultSettings):
     '''
         Runs checks to validate directory and validity
         if directories are not found, will try to create
@@ -739,21 +761,18 @@ def checkDirHelper(settingsDir,macrosDir,fileSettings):
         Pass:
             directory of settings, macros, and settings file
     '''
-    
     if(not os.path.exists(settingsDir)):
         os.makedirs(settingsDir)
     if(not os.path.exists(macrosDir)):
         os.makedirs(macrosDir)
     if (not os.path.exists(fileSettings)):
-        if(not checkFile(settingsDir,fileSettings)):
-            raise Exception("")#???
-        settingsWrite(fileSettings,[['ctrl+shift','ctrl+alt',4,30]])
+        settingsWrite(fileSettings,defaultSettings)
 
 
 
-def checkDir(settingsDir,macrosDir,fileSettings):
+def checkDir(settingsDir,macrosDir,fileSettings,defaultSettings):
     try:
-        checkDirHelper(settingsDir,macrosDir,fileSettings)
+        checkDirHelper(settingsDir,macrosDir,fileSettings,defaultSettings)
         log(0,"All directories located")
     except Exception as e:
         log(2,"Directories could not be located")
@@ -884,7 +903,7 @@ def getVersion():
         Gets the current version
         Displayed on the ui
     '''
-    return 1
+    return 1.1
 
 
 
@@ -1410,7 +1429,7 @@ class CreateMenu(FileBaseParent):
             self.base.updateLog("No file selected")
             return
             
-        m=macro(self.base.active,self.base.rd.retSettingsList())#<<<
+        m=macro(self.base.active,self.base.rd.retSettingsList(),1)#<<<
 
         def restore():
             popup.destroy()
@@ -1465,7 +1484,7 @@ class RunMenu(FileBaseParent):
             self.base.updateLog("No file selected")
             return
         
-        m=macro(self.base.active,self.base.rd.retSettingsList())#<<<
+        m=macro(self.base.active,self.base.rd.retSettingsList(),1)#<<<
 
         def restore():
             popup.destroy()
@@ -1521,8 +1540,9 @@ def main():
     DEF_KEYSTART2='shift'
     DEF_KEYSTOP1='ctrl'
     DEF_KEYSTOP2='alt'
-    DEF_RP=4
-    DEF_SP=60
+    DEF_RP=9
+    DEF_SP=240
+    DEF_SETTINGS_LIST=[DEF_KEYSTART1,DEF_KEYSTART2,DEF_KEYSTOP1,DEF_KEYSTOP2,DEF_RP,DEF_SP]
     
     current=getDir()
     settingsDir=f"{current}\\settings"
@@ -1532,11 +1552,11 @@ def main():
     settingsList=[]
 
     #init
-    checkDir(settingsDir,macrosDir,fileSettings)
-    settingsComp(fileSettings,settingsList, [DEF_KEYSTART1,DEF_KEYSTART2,DEF_KEYSTOP1,DEF_KEYSTOP2,DEF_RP,DEF_SP])#<<<
+    checkDir(settingsDir,macrosDir,fileSettings,DEF_SETTINGS_LIST)
+    settingsComp(fileSettings,settingsList, DEF_SETTINGS_LIST)#<<<
     log(0,"All file checks passed")
     #data for ui
-    rd=RunData(settingsDir,macrosDir,fileSettings,macroList,settingsList,[DEF_KEYSTART1,DEF_KEYSTART2,DEF_KEYSTOP1,DEF_KEYSTOP2,DEF_RP,DEF_SP])
+    rd=RunData(settingsDir,macrosDir,fileSettings,macroList,settingsList,DEF_SETTINGS_LIST)
 
     #ui setup
     root = tk.Tk()
