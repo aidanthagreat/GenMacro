@@ -17,7 +17,7 @@ Intended to simplify the macro creation and management process.
 
 
 ![Main menu](genmacro_v1_2_mainmenu_20261113.png)
-- File management
+- File loading interface: Options to select, create, and delete files
 - In-app console
 
 ![Action menu](genmacro_v1_2_actionmenu_20261113.png)
@@ -28,7 +28,6 @@ Intended to simplify the macro creation and management process.
 
 ![Settings menu](genmacro_v1_2_settingsmenu_20261113.png)
 - Settings: Modify keybinds and precision timings
-- File loading interface: Options to select, create, and delete files
 
 ## Dependencies
 
