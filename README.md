@@ -19,13 +19,13 @@ Intended to simplify the macro creation and management process.
 ![Main menu](genmacro_v1_2_mainmenu_20261113.png)
 - File management
 - In-app console
-- 
+
 ![Action menu](genmacro_v1_2_actionmenu_20261113.png)
 - Create: Record and save macros
 - Run: Replay saved macros
 - Toggleable hooks
 - Reverse playback
-- 
+
 ![Settings menu](genmacro_v1_2_settingsmenu_20261113.png)
 - Settings: Modify keybinds and precision timings
 - File loading interface: Options to select, create, and delete files
